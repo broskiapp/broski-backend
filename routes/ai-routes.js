@@ -6,6 +6,18 @@ const { screenshotStorage } = require('../cloudinary');
 const { authenticateUser, requireValidSubscription, requireActiveUser, requireActiveSubscription } = require('../middleware/auth');
 const { aiRateLimit } = require('../middleware/rateLimiting');
 const { checkTrialRequestLimit } = require('../middleware/trialLimiting');
+
+// OLD: Assistants API controller — kept for rollback safety
+// const {
+//     generateChatReplies,
+//     generateDailyRizzDrill,
+//     scoreRizzDrillResponse,
+//     generateConfidenceMessage,
+//     generateAwkwardSituationRecovery,
+//     analyzeScreenshot
+// } = require('../controllers/ai-controller');
+
+// NEW: Chat Completions API controller — single call per request, no polling, no Cloudinary
 const {
     generateChatReplies,
     generateDailyRizzDrill,
@@ -13,14 +25,20 @@ const {
     generateConfidenceMessage,
     generateAwkwardSituationRecovery,
     analyzeScreenshot
-} = require('../controllers/ai-controller');
+} = require('../controllers/newAIController');
 
-// Configure multer to use CloudinaryStorage for screenshots
+// OLD: Cloudinary storage upload — kept for rollback safety
 const upload = multer({
     storage: screenshotStorage,
     limits: {
         fileSize: 10 * 1024 * 1024 // 10MB limit
     }
+});
+
+// NEW: Memory storage upload — image stays in buffer, converted to base64 in controller, sent directly to OpenAI
+const uploadToMemory = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 // ============ AI SERVICE ROUTES ============
@@ -41,6 +59,9 @@ router.get('/confidence-message', authenticateUser, requireActiveUser, aiRateLim
 router.post('/awkward-situation-recovery', authenticateUser, requireActiveUser, checkTrialRequestLimit, aiRateLimit, wrapAsync(generateAwkwardSituationRecovery));
 
 // Screenshot Analysis (requires user authentication)
-router.post('/analyze-screenshot', authenticateUser, requireActiveUser, requireValidSubscription, requireActiveSubscription, checkTrialRequestLimit, aiRateLimit, upload.single('image'), wrapAsync(analyzeScreenshot));
+// OLD: upload.single('image') — uploads to Cloudinary via multer-storage-cloudinary — kept for rollback safety
+// router.post('/analyze-screenshot', authenticateUser, requireActiveUser, requireValidSubscription, requireActiveSubscription, checkTrialRequestLimit, aiRateLimit, upload.single('image'), wrapAsync(analyzeScreenshot));
+// NEW: uploadToMemory — image held in buffer, converted to base64 in controller, sent directly to OpenAI
+router.post('/analyze-screenshot', authenticateUser, requireActiveUser, requireValidSubscription, requireActiveSubscription, checkTrialRequestLimit, aiRateLimit, uploadToMemory.single('image'), wrapAsync(analyzeScreenshot));
 
 module.exports = router;
