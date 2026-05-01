@@ -26,7 +26,8 @@ const {
     getSavedChatReplies,
     addSavedChatReply,
     deleteSavedChatReply,
-    findUserBySubscriptionMetadata
+    findUserBySubscriptionMetadata,
+    syncSubscriptionFromRevenueCat
 } = require('../controllers/user-controller');
 
 // ============ USER MANAGEMENT ROUTES ============
@@ -71,6 +72,10 @@ router.post('/challenge/complete', authenticateUser, generalRateLimit, wrapAsync
 
 // Subscription lookup for StoreKit restore (no auth required)
 router.post('/subscription/lookup', generalRateLimit, wrapAsync(findUserBySubscriptionMetadata));
+
+// Sync subscription from RevenueCat after purchase — called by mobile immediately after payment
+// so DB is up to date before auto-generate fires (avoids webhook race condition)
+router.post('/subscription/sync', authenticateUser, generalRateLimit, wrapAsync(syncSubscriptionFromRevenueCat));
 
 // Complete daily drill (free, no subscription required)
 router.post('/drill/complete', authenticateUser, generalRateLimit, wrapAsync(completeDailyDrill));

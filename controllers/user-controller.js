@@ -1174,6 +1174,64 @@ const deleteOwnAccount = async (req, res) => {
     }
 };
 
+// Queries RevenueCat directly and updates the DB — called from the mobile app
+// immediately after purchase so the subscription is active before auto-generate fires.
+const syncSubscriptionFromRevenueCat = async (req, res) => {
+    const userId = req.user.userId;
+
+    const user = await User.findById(userId).lean();
+    if (!user) throw new ExpressError('User not found', 404);
+
+    if (!config.REVENUECAT_API_KEY) {
+        const effective = getEffectiveSubscription(user);
+        return res.json({ success: true, data: { subscriptionStatus: effective.subscriptionStatus, isSubscribed: effective.isSubscribed } });
+    }
+
+    const rcIds = [
+        user.subscriptionOriginalAppUserId,
+        userId.toString(),
+        ...(user.revenueCatAliases || []),
+    ].filter(Boolean);
+
+    let isActive = false;
+    let rcOriginalAppUserId = null;
+
+    for (let attempt = 0; attempt < 2 && !isActive; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
+        for (const rcId of rcIds) {
+            try {
+                const { data } = await axios.get(
+                    `https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(rcId)}`,
+                    { headers: { Authorization: `Bearer ${config.REVENUECAT_API_KEY}` }, timeout: 5000 }
+                );
+                const subscriber = data?.subscriber;
+                if (!subscriber) continue;
+                rcOriginalAppUserId = subscriber.original_app_user_id || null;
+                const entitlements = subscriber.entitlements || {};
+                const ent = entitlements.pro || entitlements.Pro || Object.values(entitlements)[0];
+                if (ent?.expires_date && new Date(ent.expires_date) > new Date()) {
+                    isActive = true;
+                    break;
+                }
+            } catch { }
+        }
+    }
+
+    if (isActive) {
+        const updates = {
+            subscriptionStatus: 'active',
+            isSubscribed: true,
+            subscriptionTier: 'pro',
+        };
+        if (rcOriginalAppUserId) updates.subscriptionOriginalAppUserId = rcOriginalAppUserId;
+        await User.findByIdAndUpdate(userId, updates);
+        return res.json({ success: true, data: { subscriptionStatus: 'active', isSubscribed: true } });
+    }
+
+    const effective = getEffectiveSubscription(user);
+    res.json({ success: true, data: { subscriptionStatus: effective.subscriptionStatus, isSubscribed: effective.isSubscribed } });
+};
+
 module.exports = {
     registerAnonymous,
     registerUser,
@@ -1194,5 +1252,6 @@ module.exports = {
     toggleUserStatus,
     deleteUser,
     deleteOwnAccount,
-    findUserBySubscriptionMetadata
+    findUserBySubscriptionMetadata,
+    syncSubscriptionFromRevenueCat
 };
